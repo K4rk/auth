@@ -108,6 +108,13 @@ main() {
 
   install_git
   install_docker
+  # Pull latest main branch
+  git pull
+
+  # Update submodules
+  git submodule update --init --recursive
+  git submodule update --remote --merge
+
 
   setup_network
   setup_letsencrypt

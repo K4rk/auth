@@ -1,0 +1,6 @@
+[submodule "traefik"]
+	path = traefik
+	url = https://github.com/K4rk/traefik.git
+[submodule "keycloak"]
+	path = keycloak
+	url = https://github.com/K4rk/keycloak.git

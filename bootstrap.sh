@@ -121,7 +121,6 @@ main() {
   install_git
   install_docker
   # Pull latest main branch
-  # Pull latest main branch
   git config --global credential.helper store
   ensure_repo "https://github.com/K4rk/traefik.git" "traefik"
   rm -r traefik/rules/*

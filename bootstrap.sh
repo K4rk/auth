@@ -71,6 +71,19 @@ install_mc() {
   ln -sf /usr/local/bin/mc /usr/bin/mc
 }
 
+ensure_repo() {
+  local repo_url="$1"
+  local dir="$2"
+
+  if [[ -d "$dir/.git" ]]; then
+    log "Repository '$dir' already exists, updating..."
+    git -C "$dir" pull --ff-only || warn "Git pull failed in $dir"
+  else
+    log "Cloning repository into '$dir'..."
+    git clone "$repo_url" "$dir"
+  fi
+}
+
 setup_network() {
   log "Ensuring Docker network exists..."
   docker network inspect traefik-net >/dev/null 2>&1 || \
@@ -105,16 +118,13 @@ ask_build_strategy() {
 
 main() {
   require_root
-
   install_git
   install_docker
   # Pull latest main branch
-  git pull
-
-  # Update submodules
-  git submodule update --init --recursive
-  git submodule update --remote --merge
-
+  # Pull latest main branch
+  git config --global credential.helper store
+  ensure_repo "https://github.com/K4rk/traefik.git" "traefik"
+  rm -r traefik/rules/*
 
   setup_network
   setup_letsencrypt

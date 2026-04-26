@@ -70,29 +70,6 @@ install_mc() {
   ln -sf /usr/local/bin/mc /usr/bin/mc
 }
 
-setup_sysctl_keycloak_udp() {
-  log "Configuring sysctl for Keycloak/JGroups UDP (immediate + persistent)..."
-
-  local file="/etc/sysctl.d/99-keycloak-udp.conf"
-
-  # Persistent config (idempotent overwrite)
-  cat > "$file" <<EOF
-net.core.rmem_max=33554432
-net.core.wmem_max=33554432
-net.core.rmem_default=2621440
-net.core.wmem_default=2621440
-EOF
-
-  # Apply immediately (runtime)
-  sysctl -w net.core.rmem_max=33554432
-  sysctl -w net.core.wmem_max=33554432
-  sysctl -w net.core.rmem_default=2621440
-  sysctl -w net.core.wmem_default=2621440
-
-  # Ensure system consistency
-  sysctl --system >/dev/null
-}
-
 ensure_repo() {
   local repo_url="$1"
   local dir="$2"
@@ -142,7 +119,7 @@ main() {
   require_root
   install_git
   install_docker
-  setup_sysctl_keycloak_udp
+  # Pull latest main branch
   git config --global credential.helper store
   ensure_repo "https://github.com/K4rk/traefik.git" "traefik"
   rm -rf traefik/rules/*

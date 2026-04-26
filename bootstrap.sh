@@ -49,7 +49,6 @@ install_docker() {
     docker-buildx-plugin docker-compose-plugin
 }
 
-
 install_mc() {
   log "Installing MinIO client (mc)..."
 
@@ -69,6 +68,29 @@ install_mc() {
 
   chmod +x /usr/local/bin/mc
   ln -sf /usr/local/bin/mc /usr/bin/mc
+}
+
+setup_sysctl_keycloak_udp() {
+  log "Configuring sysctl for Keycloak/JGroups UDP (immediate + persistent)..."
+
+  local file="/etc/sysctl.d/99-keycloak-udp.conf"
+
+  # Persistent config (idempotent overwrite)
+  cat > "$file" <<EOF
+net.core.rmem_max=33554432
+net.core.wmem_max=33554432
+net.core.rmem_default=2621440
+net.core.wmem_default=2621440
+EOF
+
+  # Apply immediately (runtime)
+  sysctl -w net.core.rmem_max=33554432
+  sysctl -w net.core.wmem_max=33554432
+  sysctl -w net.core.rmem_default=2621440
+  sysctl -w net.core.wmem_default=2621440
+
+  # Ensure system consistency
+  sysctl --system >/dev/null
 }
 
 ensure_repo() {
@@ -120,10 +142,10 @@ main() {
   require_root
   install_git
   install_docker
-  # Pull latest main branch
+  setup_sysctl_keycloak_udp
   git config --global credential.helper store
   ensure_repo "https://github.com/K4rk/traefik.git" "traefik"
-  rm -r traefik/rules/*
+  rm -rf traefik/rules/*
 
   setup_network
   setup_letsencrypt

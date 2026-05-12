@@ -49,27 +49,6 @@ install_docker() {
     docker-buildx-plugin docker-compose-plugin
 }
 
-install_mc() {
-  log "Installing MinIO client (mc)..."
-
-  rm -f /usr/bin/mc
-
-  OS=$(uname | tr '[:upper:]' '[:lower:]')
-  ARCH=$(uname -m)
-
-  case "$ARCH" in
-    x86_64) ARCH="amd64" ;;
-    aarch64|arm64) ARCH="arm64" ;;
-    *) err "Unsupported architecture: $ARCH" ;;
-  esac
-
-  curl -fsSL "https://dl.min.io/client/mc/release/${OS}-${ARCH}/mc" \
-    -o /usr/local/bin/mc
-
-  chmod +x /usr/local/bin/mc
-  ln -sf /usr/local/bin/mc /usr/bin/mc
-}
-
 ensure_repo() {
   local repo_url="$1"
   local dir="$2"
@@ -123,6 +102,11 @@ main() {
   git config --global credential.helper store
   ensure_repo "https://github.com/K4rk/traefik.git" "traefik"
   rm -rf traefik/rules/*
+
+  cd keycloak
+  git checkout main
+  git pull
+  cd ..
 
   setup_network
   setup_letsencrypt

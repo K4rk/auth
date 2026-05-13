@@ -80,7 +80,6 @@ start_service() {
   log "Starting service in $dir..."
   pushd "$dir" >/dev/null
   docker compose up -d
-  docker compose restart
   popd >/dev/null
 }
 
@@ -112,6 +111,8 @@ main() {
   cd traefik
   git checkout main
   git pull
+  # restarts only if running
+  docker compose restart
   cd ..
 
   setup_network

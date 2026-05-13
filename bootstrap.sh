@@ -108,6 +108,11 @@ main() {
   git pull
   cd ..
 
+  cd traefik
+  git checkout main
+  git pull
+  cd ..
+
   setup_network
   setup_letsencrypt
 

@@ -95,25 +95,31 @@ ask_build_strategy() {
 }
 
 main() {
+
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  cd "$SCRIPT_DIR"
+
   require_root
   install_git
   install_docker
-  # Pull latest main branch
+
   git config --global credential.helper store
+
   ensure_repo "https://github.com/K4rk/traefik.git" "traefik"
-  rm -rf traefik/rules/*
 
-  cd keycloak
+  rm -rf "$SCRIPT_DIR/traefik/rules/"*
+
   git checkout main
   git pull
-  cd ..
 
-  cd traefik
+  cd "$SCRIPT_DIR/traefik"
+
   git checkout main
   git pull
-  # restarts only if running
-  docker compose restart
-  cd ..
+
+  docker compose restart || true
+
+  cd "$SCRIPT_DIR"
 
   setup_network
   setup_letsencrypt

@@ -82,9 +82,6 @@ start_service() {
 
   pushd "$dir" >/dev/null
 
-  pwd
-  ls -la
-
   docker compose up -d
 
   popd >/dev/null
@@ -134,9 +131,7 @@ main() {
   setup_letsencrypt
 
   start_service traefik
-  cd "$SCRIPT_DIR/keycloak"
-  docker compose up -d
-  
+  start_service "$SCRIPT_DIR/keycloak"
 
   log "All services started successfully"
 }

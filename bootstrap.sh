@@ -134,7 +134,9 @@ main() {
   setup_letsencrypt
 
   start_service traefik
-  start_service "$SCRIPT_DIR/keycloak"
+  cd "$SCRIPT_DIR/keycloak"
+  docker compose up -d
+  
 
   log "All services started successfully"
 }

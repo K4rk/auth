@@ -125,7 +125,7 @@ main() {
   setup_letsencrypt
 
   start_service traefik
-  start_service "$SCRIPT_DIR"
+  start_service "$SCRIPT_DIR/keycloak"
 
   log "All services started successfully"
 }

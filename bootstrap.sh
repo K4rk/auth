@@ -108,6 +108,8 @@ main() {
   require_root
   install_git
   install_docker
+  git submodule update --init --recursive
+  git submodule update --remote --merge
 
   git config --global credential.helper store
 

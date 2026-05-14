@@ -77,11 +77,19 @@ setup_letsencrypt() {
 
 start_service() {
   local dir="$1"
+
   log "Starting service in $dir..."
+
   pushd "$dir" >/dev/null
+
+  pwd
+  ls -la
+
   docker compose up -d
-  log "Service Started in $dir..."
+
   popd >/dev/null
+
+  log "Service Started in $dir..."
 }
 
 ask_build_strategy() {

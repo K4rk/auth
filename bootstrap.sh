@@ -115,7 +115,7 @@ main() {
 
   ensure_repo "https://github.com/K4rk/traefik.git" "traefik"
 
-  rm -rf "$SCRIPT_DIR/traefik/rules/"*
+  rm -rf "$SCRIPT_DIR/traefik/rules/proxmox.yml"
 
   git checkout main
   git pull
@@ -124,7 +124,7 @@ main() {
 
   git checkout main
   git pull
-
+  bash replace-identifier.sh auth
   docker compose restart || true
 
   cd "$SCRIPT_DIR"

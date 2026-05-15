@@ -115,8 +115,6 @@ main() {
 
   ensure_repo "https://github.com/K4rk/traefik.git" "traefik"
 
-  rm -rf "$SCRIPT_DIR/traefik/rules/proxmox.yml"
-
   git checkout main
   git pull
 

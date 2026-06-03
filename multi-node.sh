@@ -193,9 +193,9 @@ setup_letsencrypt() {
 
   ssh_run "$HOST" <<'EOF'
 set -euo pipefail
-mkdir -p /opt/stack/traefik/letsencrypt
-touch /opt/stack/traefik/letsencrypt/acme.json
-chmod 600 /opt/stack/traefik/letsencrypt/acme.json
+mkdir -p /root/traefik/letsencrypt
+touch /root/traefik/letsencrypt/acme.json
+chmod 600 /root/traefik/letsencrypt/acme.json
 EOF
 }
 
@@ -205,9 +205,9 @@ link_env_files() {
   ssh_run "$HOST" <<'EOF'
 set -euo pipefail
 
-ln -sfn ../.env /opt/stack/traefik/.env || true
-ln -sfn ../.env /opt/stack/keycloak/.env || true
-ln -sfn ../.env /opt/stack/postgres-ha/.env || true
+ln -sfn ../.env /root/traefik/.env || true
+ln -sfn ../.env /root/keycloak/.env || true
+ln -sfn ../.env /root/postgres-ha/.env || true
 EOF
 }
 
@@ -233,11 +233,11 @@ git pull --ff-only || true
 
 bash replace-identifier.sh auth || true
 
-mkdir -p /opt/stack/traefik/letsencrypt
-touch /opt/stack/traefik/letsencrypt/acme.json
-chmod 600 /opt/stack/traefik/letsencrypt/acme.json
+mkdir -p /root/traefik/letsencrypt
+touch /root/traefik/letsencrypt/acme.json
+chmod 600 /root/traefik/letsencrypt/acme.json
 
-ln -sfn ../.env /opt/stack/traefik/.env
+ln -sfn ../.env /root/traefik/.env
 
 docker network inspect traefik-net >/dev/null 2>&1 || docker network create traefik-net
 
@@ -256,8 +256,8 @@ deploy_patroni_etcd() {
   ssh_run "$HOST" <<EOF
 set -euo pipefail
 
-mkdir -p /opt/stack/postgres-ha
-cd /opt/stack/postgres-ha
+mkdir -p /root/postgres-ha
+cd /root/postgres-ha
 
 ln -sfn ../.env .env
 
@@ -358,21 +358,21 @@ deploy_keycloak() {
   ssh_run "$HOST" <<EOF
 set -euo pipefail
 
-if [ -d /opt/stack/keycloak ]; then
-  cd /opt/stack/keycloak
+if [ -d /root/keycloak ]; then
+  cd /root/keycloak
   docker compose down || true
 fi
 
-rm -rf /opt/stack/keycloak
-mkdir -p /opt/stack/keycloak
+rm -rf /root/keycloak
+mkdir -p /root/keycloak
 EOF
 
-  sync_dir_to_host "$LOCAL_KEYCLOAK_DIR" "$HOST" "/opt/stack/keycloak"
+  sync_dir_to_host "$LOCAL_KEYCLOAK_DIR" "$HOST" "/root/keycloak"
 
   ssh_run "$HOST" <<EOF
 set -euo pipefail
 
-cd /opt/stack/keycloak
+cd /root/keycloak
 
 ln -sfn ../.env .env
 

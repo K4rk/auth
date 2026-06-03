@@ -24,11 +24,12 @@ NODES=(
 
 POSTGRES_PRIMARY="10.31.31.14"
 KEYCLOAK_CLUSTER_HOSTS="10.31.31.14[7800],10.31.31.15[7800],10.31.31.16[7800]"
-ETCD_INITIAL_CLUSTER="etcd-10-31-31-14=http://10.31.31.14:2380,etcd-10-31-31-15=http://10.31.31.15:2380,etcd-10-31-31-16=http://10.31.31.16:2380"
-ETCD3_HOSTS="10.31.31.14:2379,10.31.31.15:2379,10.31.31.16:2379"
 
 PATRONI_SCOPE="keycloak-pg"
 ETCD_INITIAL_CLUSTER_TOKEN="patroni-etcd"
+SPILO_PROVIDER="local"
+PGVERSION="16"
+ETCD3_HOSTS="10.31.31.14:2379,10.31.31.15:2379,10.31.31.16:2379"
 
 TRAEFIK_REPO_URL="https://github.com/K4rk/traefik.git"
 
@@ -43,6 +44,27 @@ require_cmd tar
 node_slug() {
   echo "${1//./-}"
 }
+
+build_etcd_initial_cluster() {
+  local cluster=""
+  local host slug
+
+  for host in "${NODES[@]}"; do
+    slug="$(node_slug "$host")"
+    cluster+="etcd-${slug}=http://${host}:2380,"
+  done
+
+  echo "${cluster%,}"
+}
+
+build_etcd_hosts_yaml() {
+  local host
+  for host in "${NODES[@]}"; do
+    printf '          - %s:2379\n' "$host"
+  done
+}
+
+ETCD_INITIAL_CLUSTER="$(build_etcd_initial_cluster)"
 
 ssh_run() {
   local HOST="$1"
@@ -71,7 +93,7 @@ append_node_env() {
 set -euo pipefail
 
 tmp="\$(mktemp)"
-grep -Ev '^(NODE_IP|POSTGRES_PRIMARY_HOST|KEYCLOAK_CLUSTER_HOSTS|PATRONI_SCOPE|PATRONI_NODE_NAME|ETCD_NODE_NAME|ETCD_INITIAL_CLUSTER|ETCD_INITIAL_CLUSTER_TOKEN|ETCD3_HOSTS|PGVERSION|SPILO_PROVIDER)=' \
+grep -Ev '^(NODE_IP|POSTGRES_PRIMARY_HOST|KEYCLOAK_CLUSTER_HOSTS|PATRONI_SCOPE|PATRONI_NODE_NAME|ETCD_NODE_NAME|ETCD_INITIAL_CLUSTER|ETCD_INITIAL_CLUSTER_TOKEN|SPILO_PROVIDER|PGVERSION|ETCD3_HOSTS)=' \
   "$REPO_BASE_DIR/.env" > "\$tmp" || true
 
 cat >>"\$tmp" <<ENVVARS
@@ -84,9 +106,9 @@ PATRONI_NODE_NAME=pg-$NODE_SLUG
 ETCD_NODE_NAME=etcd-$NODE_SLUG
 ETCD_INITIAL_CLUSTER=$ETCD_INITIAL_CLUSTER
 ETCD_INITIAL_CLUSTER_TOKEN=$ETCD_INITIAL_CLUSTER_TOKEN
+SPILO_PROVIDER=$SPILO_PROVIDER
+PGVERSION=$PGVERSION
 ETCD3_HOSTS=$ETCD3_HOSTS
-PGVERSION=16
-SPILO_PROVIDER=local
 ENVVARS
 
 mv "\$tmp" "$REPO_BASE_DIR/.env"
@@ -206,11 +228,11 @@ git pull --ff-only || true
 
 bash replace-identifier.sh auth || true
 
-cp "$REPO_BASE_DIR/.env" "$REPO_BASE_DIR/traefik/.env"
-
 mkdir -p /root/traefik/letsencrypt
 touch /root/traefik/letsencrypt/acme.json
 chmod 600 /root/traefik/letsencrypt/acme.json
+
+cp "$REPO_BASE_DIR/.env" "$REPO_BASE_DIR/traefik/.env" || true
 
 docker network inspect traefik-net >/dev/null 2>&1 || docker network create traefik-net
 
@@ -232,7 +254,7 @@ set -euo pipefail
 mkdir -p /root/postgres-ha
 cd /root/postgres-ha
 
-cp "$REPO_BASE_DIR/.env" "$REPO_BASE_DIR/postgres-ha/.env"
+cp "$REPO_BASE_DIR/.env" "$REPO_BASE_DIR/postgres-ha/.env" || true
 
 cat >docker-compose.yml <<COMPOSE
 services:
@@ -243,16 +265,26 @@ services:
     restart: unless-stopped
     volumes:
       - etcd_data:/etcd-data
+    entrypoint: ["/usr/local/bin/etcd"]
     command:
-      - --name=etcd-${NODE_SLUG}
-      - --data-dir=/etcd-data
-      - --listen-peer-urls=http://0.0.0.0:2380
-      - --listen-client-urls=http://0.0.0.0:2379
-      - --advertise-client-urls=http://${NODE_IP}:2379
-      - --initial-advertise-peer-urls=http://${NODE_IP}:2380
-      - --initial-cluster=${ETCD_INITIAL_CLUSTER}
-      - --initial-cluster-token=${ETCD_INITIAL_CLUSTER_TOKEN}
-      - --initial-cluster-state=new
+      - --name
+      - etcd-${NODE_SLUG}
+      - --data-dir
+      - /etcd-data
+      - --listen-peer-urls
+      - http://0.0.0.0:2380
+      - --listen-client-urls
+      - http://0.0.0.0:2379,http://127.0.0.1:2379
+      - --advertise-client-urls
+      - http://${NODE_IP}:2379
+      - --initial-advertise-peer-urls
+      - http://${NODE_IP}:2380
+      - --initial-cluster
+      - ${ETCD_INITIAL_CLUSTER}
+      - --initial-cluster-token
+      - ${ETCD_INITIAL_CLUSTER_TOKEN}
+      - --initial-cluster-state
+      - new
 
   patroni:
     image: ghcr.io/zalando/spilo-16:3.3-p3
@@ -262,20 +294,18 @@ services:
     depends_on:
       - etcd
     environment:
-      SPILO_PROVIDER: \${SPILO_PROVIDER}
-      SCOPE: \${PATRONI_SCOPE}
-      ETCD3_HOSTS: \${ETCD3_HOSTS}
-      PGVERSION: \${PGVERSION}
+      SPILO_PROVIDER: ${SPILO_PROVIDER}
+      PGVERSION: ${PGVERSION}
+      SCOPE: ${PATRONI_SCOPE}
+      ETCD3_HOSTS: ${ETCD3_HOSTS}
       RESTAPI_CONNECT_ADDRESS: ${NODE_IP}:8008
-      SPILO_CONFIGURATION: |
+      PATRONI_CONFIGURATION: |
         postgresql:
           connect_address: ${NODE_IP}:5432
       PGUSER_SUPERUSER: \${POSTGRESQL_USER}
       PGPASSWORD_SUPERUSER: \${POSTGRESQL_PASS}
       PGUSER_STANDBY: \${POSTGRESQL_USER}
       PGPASSWORD_STANDBY: \${POSTGRESQL_PASS}
-    volumes:
-      - patroni_data:/home/postgres/pgdata
 
 volumes:
   etcd_data:
@@ -311,7 +341,7 @@ set -euo pipefail
 
 cd /root/keycloak
 
-cp "$REPO_BASE_DIR/.env" "$REPO_BASE_DIR/keycloak/.env"
+cp "$REPO_BASE_DIR/.env" "$REPO_BASE_DIR/keycloak/.env" || true
 
 cat >docker-compose.override.yml <<COMPOSE
 services:

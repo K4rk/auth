@@ -216,7 +216,6 @@ elif [ -d "traefik" ]; then
 else
   git clone "$TRAEFIK_REPO_URL" traefik
 fi
-# DO NOT FUCKING COPY .env, TRAEFIK HAS ITS OWN ENV IN THE FUCKING REPO
 
 cd traefik
 git checkout main || true
@@ -234,13 +233,13 @@ docker compose up -d --remove-orphans
 EOF
 }
 
-deploy_patroni_etcd() {
+deploy_patroni_stack() {
   local HOST="$1"
   local NODE_IP="$2"
   local NODE_SLUG
   NODE_SLUG="$(node_slug "$NODE_IP")"
 
-  log "Deploying Patroni + etcd on $HOST"
+  log "Preparing Patroni + etcd on $HOST"
 
   ssh_run "$HOST" <<EOF
 set -euo pipefail
@@ -312,7 +311,19 @@ volumes:
   patroni_data:
 COMPOSE
 
-docker compose up -d --remove-orphans
+docker compose up -d etcd
+EOF
+}
+
+start_patroni() {
+  local HOST="$1"
+
+  log "Starting Patroni on $HOST"
+
+  ssh_run "$HOST" <<'EOF'
+set -euo pipefail
+cd /root/postgres-ha
+docker compose up -d patroni
 EOF
 }
 
@@ -426,13 +437,21 @@ main() {
     deploy_traefik "$n"
   done
 
-  log "Deploying Patroni + etcd cluster..."
+  log "Preparing Patroni + etcd cluster..."
   for n in "${NODES[@]}"; do
-    deploy_patroni_etcd "$n" "$n"
+    deploy_patroni_stack "$n" "$n"
   done
 
   for n in "${NODES[@]}"; do
     wait_for_tcp "$n" 2379 "etcd"
+  done
+
+  log "Starting Patroni..."
+  for n in "${NODES[@]}"; do
+    start_patroni "$n"
+  done
+
+  for n in "${NODES[@]}"; do
     wait_for_tcp "$n" 8008 "patroni"
   done
 

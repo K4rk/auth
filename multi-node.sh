@@ -14,7 +14,7 @@ LOCAL_ENV_FILE="$SCRIPT_DIR/keycloak/.env"
 LOCAL_KEYCLOAK_DIR="$SCRIPT_DIR/keycloak"
 
 USER="root"
-REPO_BASE_DIR="/opt/stack"
+REPO_BASE_DIR="/root"
 
 NODES=(
   "10.31.31.14"
@@ -175,7 +175,7 @@ fi
 systemctl enable docker >/dev/null 2>&1 || true
 systemctl restart docker
 
-mkdir -p /opt/stack
+mkdir -p /root
 EOF
 }
 

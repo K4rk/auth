@@ -232,8 +232,6 @@ mkdir -p /root/traefik/letsencrypt
 touch /root/traefik/letsencrypt/acme.json
 chmod 600 /root/traefik/letsencrypt/acme.json
 
-cp "$REPO_BASE_DIR/.env" "$REPO_BASE_DIR/traefik/.env" || true
-
 docker network inspect traefik-net >/dev/null 2>&1 || docker network create traefik-net
 
 docker compose up -d --remove-orphans

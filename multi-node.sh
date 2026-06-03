@@ -23,9 +23,10 @@ NODES=(
 )
 
 POSTGRES_PRIMARY="10.31.31.14"
-POSTGRES_REPLICA="10.31.31.16"
-
 KEYCLOAK_CLUSTER_HOSTS="10.31.31.14[7800],10.31.31.15[7800],10.31.31.16[7800]"
+
+PATRONI_SCOPE="keycloak-pg"
+ETCD_INITIAL_CLUSTER_TOKEN="patroni-etcd"
 
 TRAEFIK_REPO_URL="https://github.com/K4rk/traefik.git"
 
@@ -36,6 +37,31 @@ require_cmd tar
 
 [[ -f "$LOCAL_ENV_FILE" ]] || err "Missing local .env at: $LOCAL_ENV_FILE"
 [[ -d "$LOCAL_KEYCLOAK_DIR" ]] || err "Missing local keycloak directory at: $LOCAL_KEYCLOAK_DIR"
+
+node_slug() {
+  echo "${1//./-}"
+}
+
+build_etcd_initial_cluster() {
+  local cluster=""
+  local host slug
+
+  for host in "${NODES[@]}"; do
+    slug="$(node_slug "$host")"
+    cluster+="etcd-${slug}=http://${host}:2380,"
+  done
+
+  echo "${cluster%,}"
+}
+
+build_etcd_hosts_yaml() {
+  local host
+  for host in "${NODES[@]}"; do
+    printf '          - %s:2379\n' "$host"
+  done
+}
+
+ETCD_INITIAL_CLUSTER="$(build_etcd_initial_cluster)"
 
 ssh_run() {
   local HOST="$1"
@@ -57,16 +83,29 @@ copy_env_to_host() {
 append_node_env() {
   local HOST="$1"
   local NODE_IP="$2"
+  local NODE_SLUG
+  NODE_SLUG="$(node_slug "$NODE_IP")"
 
   ssh_run "$HOST" <<EOF
 set -euo pipefail
 
-cat >>"$REPO_BASE_DIR/.env" <<ENVVARS
+tmp="\$(mktemp)"
+grep -Ev '^(NODE_IP|POSTGRES_PRIMARY_HOST|KEYCLOAK_CLUSTER_HOSTS|PATRONI_SCOPE|PATRONI_NODE_NAME|ETCD_NODE_NAME|ETCD_INITIAL_CLUSTER|ETCD_INITIAL_CLUSTER_TOKEN)=' \
+  "$REPO_BASE_DIR/.env" > "\$tmp" || true
+
+cat >>"\$tmp" <<ENVVARS
 
 NODE_IP=$NODE_IP
 POSTGRES_PRIMARY_HOST=$POSTGRES_PRIMARY
 KEYCLOAK_CLUSTER_HOSTS=$KEYCLOAK_CLUSTER_HOSTS
+PATRONI_SCOPE=$PATRONI_SCOPE
+PATRONI_NODE_NAME=pg-$NODE_SLUG
+ETCD_NODE_NAME=etcd-$NODE_SLUG
+ETCD_INITIAL_CLUSTER=$ETCD_INITIAL_CLUSTER
+ETCD_INITIAL_CLUSTER_TOKEN=$ETCD_INITIAL_CLUSTER_TOKEN
 ENVVARS
+
+mv "\$tmp" "$REPO_BASE_DIR/.env"
 EOF
 }
 
@@ -168,8 +207,7 @@ set -euo pipefail
 
 ln -sfn ../.env /opt/stack/traefik/.env || true
 ln -sfn ../.env /opt/stack/keycloak/.env || true
-ln -sfn ../.env /opt/stack/postgres-primary/.env || true
-ln -sfn ../.env /opt/stack/postgres-replica/.env || true
+ln -sfn ../.env /opt/stack/postgres-ha/.env || true
 EOF
 }
 
@@ -207,132 +245,105 @@ docker compose up -d --remove-orphans
 EOF
 }
 
-deploy_postgres_primary() {
+deploy_patroni_etcd() {
   local HOST="$1"
+  local NODE_IP="$2"
+  local NODE_SLUG
+  NODE_SLUG="$(node_slug "$NODE_IP")"
 
-  log "Deploying PostgreSQL primary on $HOST"
+  log "Deploying Patroni + etcd on $HOST"
 
-  ssh_run "$HOST" <<'EOF'
+  ssh_run "$HOST" <<EOF
 set -euo pipefail
 
-mkdir -p /opt/stack/postgres-primary/initdb
-cd /opt/stack/postgres-primary
+mkdir -p /opt/stack/postgres-ha
+cd /opt/stack/postgres-ha
 
 ln -sfn ../.env .env
 
-cat >docker-compose.yml <<'COMPOSE'
+cat >docker-compose.yml <<COMPOSE
 services:
-  postgres:
-    image: postgres:14
-    container_name: postgres-primary
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.13
+    container_name: etcd-${NODE_SLUG}
+    network_mode: host
     restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRESQL_DB}
-      POSTGRES_USER: ${POSTGRESQL_USER}
-      POSTGRES_PASSWORD: ${POSTGRESQL_PASS}
-      POSTGRES_HOST_AUTH_METHOD: md5
-      POSTGRES_INITDB_ARGS: "--auth-host=md5 --auth-local=trust"
-    ports:
-      - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./initdb:/docker-entrypoint-initdb.d:ro
-    command: >
-      postgres
-      -c wal_level=replica
-      -c max_wal_senders=10
-      -c max_replication_slots=10
-      -c wal_keep_size=256MB
-      -c listen_addresses='*'
+      - etcd_data:/etcd-data
+    entrypoint: ["/usr/local/bin/etcd"]
+    command:
+      - --name
+      - etcd-${NODE_SLUG}
+      - --data-dir
+      - /etcd-data
+      - --listen-peer-urls
+      - http://0.0.0.0:2380
+      - --listen-client-urls
+      - http://0.0.0.0:2379,http://127.0.0.1:2379
+      - --advertise-client-urls
+      - http://${NODE_IP}:2379
+      - --initial-advertise-peer-urls
+      - http://${NODE_IP}:2380
+      - --initial-cluster
+      - ${ETCD_INITIAL_CLUSTER}
+      - --initial-cluster-token
+      - ${ETCD_INITIAL_CLUSTER_TOKEN}
+      - --initial-cluster-state
+      - new
+
+  patroni:
+    image: ghcr.io/zalando/spilo-16:3.3-p3
+    container_name: patroni-${NODE_SLUG}
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - etcd
+    environment:
+      PATRONI_CONFIGURATION: |
+        scope: ${PATRONI_SCOPE}
+        namespace: /service
+        name: pg-${NODE_SLUG}
+        restapi:
+          listen: 0.0.0.0:8008
+          connect_address: ${NODE_IP}:8008
+        etcd3:
+          hosts:
+$(build_etcd_hosts_yaml)
+        bootstrap:
+          dcs:
+            ttl: 30
+            loop_wait: 10
+            retry_timeout: 10
+            maximum_lag_on_failover: 1048576
+            synchronous_mode: true
+            postgresql:
+              use_pg_rewind: true
+              use_slots: true
+          initdb:
+            - encoding: UTF8
+            - data-checksums
+        postgresql:
+          listen: 0.0.0.0:5432
+          connect_address: ${NODE_IP}:5432
+          data_dir: /home/postgres/pgdata/pgroot/data
+          bin_dir: /usr/lib/postgresql/16/bin
+          authentication:
+            superuser:
+              username: \${POSTGRESQL_USER}
+              password: \${POSTGRESQL_PASS}
+            replication:
+              username: \${POSTGRESQL_USER}
+              password: \${POSTGRESQL_PASS}
+            rewind:
+              username: \${POSTGRESQL_USER}
+              password: \${POSTGRESQL_PASS}
+    volumes:
+      - patroni_data:/home/postgres/pgdata
 
 volumes:
-  pgdata:
+  etcd_data:
+  patroni_data:
 COMPOSE
-
-cat >initdb/01-replication.sh <<'EOSH'
-#!/bin/bash
-set -euo pipefail
-
-echo "host replication all all md5" >> "$PGDATA/pg_hba.conf"
-
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<'SQL'
-DO $$
-BEGIN
-  EXECUTE format('ALTER ROLE %I WITH REPLICATION LOGIN', current_user);
-EXCEPTION
-  WHEN insufficient_privilege THEN
-    RAISE NOTICE 'Could not alter role privileges';
-END
-$$;
-SQL
-EOSH
-
-chmod +x initdb/01-replication.sh
-
-docker compose up -d --remove-orphans
-EOF
-}
-
-deploy_postgres_replica() {
-  local HOST="$1"
-
-  log "Deploying PostgreSQL replica on $HOST"
-
-  ssh_run "$HOST" <<'EOF'
-set -euo pipefail
-
-mkdir -p /opt/stack/postgres-replica
-cd /opt/stack/postgres-replica
-
-ln -sfn ../.env .env
-
-cat >docker-compose.yml <<'COMPOSE'
-services:
-  postgres:
-    image: postgres:14
-    container_name: postgres-replica
-    restart: unless-stopped
-    user: root
-    environment:
-      PRIMARY_HOST: ${POSTGRES_PRIMARY_HOST}
-      REPLICATION_USER: ${POSTGRESQL_USER}
-      REPLICATION_PASSWORD: ${POSTGRESQL_PASS}
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./start-replica.sh:/start-replica.sh:ro
-    entrypoint: ["/bin/bash", "/start-replica.sh"]
-
-volumes:
-  pgdata:
-COMPOSE
-
-cat >start-replica.sh <<'EOSH'
-#!/bin/bash
-set -euo pipefail
-
-: "${PRIMARY_HOST:?}"
-: "${REPLICATION_USER:?}"
-: "${REPLICATION_PASSWORD:?}"
-
-mkdir -p "$PGDATA"
-chown -R postgres:postgres "$PGDATA" || true
-
-if [ ! -s "$PGDATA/PG_VERSION" ]; then
-  until pg_isready -h "$PRIMARY_HOST" -p 5432 -U "$REPLICATION_USER" >/dev/null 2>&1; do
-    sleep 2
-  done
-
-  export PGPASSWORD="$REPLICATION_PASSWORD"
-  find "$PGDATA" -mindepth 1 -maxdepth 1 -exec rm -rf {} + || true
-  gosu postgres pg_basebackup -h "$PRIMARY_HOST" -p 5432 -U "$REPLICATION_USER" -D "$PGDATA" -Fp -Xs -P -R
-fi
-
-exec gosu postgres postgres -c hot_standby=on -c listen_addresses='*'
-EOSH
-
-chmod +x start-replica.sh
 
 docker compose up -d --remove-orphans
 EOF
@@ -365,7 +376,7 @@ cd /opt/stack/keycloak
 
 ln -sfn ../.env .env
 
-cat >docker-compose.override.yml <<'COMPOSE'
+cat >docker-compose.override.yml <<COMPOSE
 services:
   keycloak:
     image: registry2.esadax.org/ironic/keycloak
@@ -373,11 +384,11 @@ services:
     restart: unless-stopped
     environment:
       KC_DB: postgres
-      KC_DB_URL_HOST: ${POSTGRES_PRIMARY_HOST}
-      KC_DB_URL_DATABASE: ${POSTGRESQL_DB}
-      KC_DB_USERNAME: ${POSTGRESQL_USER}
-      KC_DB_PASSWORD: ${POSTGRESQL_PASS}
-      KC_HOSTNAME: ${KC_HOSTNAME:-auth2.esadax.org}
+      KC_DB_URL_HOST: \${POSTGRES_PRIMARY_HOST}
+      KC_DB_URL_DATABASE: \${POSTGRESQL_DB}
+      KC_DB_USERNAME: \${POSTGRESQL_USER}
+      KC_DB_PASSWORD: \${POSTGRESQL_PASS}
+      KC_HOSTNAME: \${KC_HOSTNAME:-auth2.esadax.org}
       KC_HOSTNAME_STRICT: "false"
       KC_HTTP_ENABLED: "true"
       KC_HTTP_PORT: 8080
@@ -398,7 +409,7 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=traefik-net
-      - traefik.http.routers.keycloak-24.rule=Host(`auth2.esadax.org`)
+      - traefik.http.routers.keycloak-24.rule=Host(\`auth2.esadax.org\`)
       - traefik.http.routers.keycloak-24.entrypoints=https
       - traefik.http.routers.keycloak-24.tls=true
       - traefik.http.routers.keycloak-24.tls.certresolver=powerdns
@@ -419,32 +430,43 @@ EOF
 }
 
 main() {
-  for HOST in "${NODES[@]}"; do
-    install_base "$HOST"
-    copy_env_to_host "$HOST"
-    append_node_env "$HOST" "$HOST"
-    setup_network "$HOST"
+  read -s -p "Root SSH password: " SSHPASS
+  echo ""
+
+  log "Installing base on all nodes..."
+  for n in "${NODES[@]}"; do
+    install_base "$n"
+    copy_env_to_host "$n"
+    append_node_env "$n" "$n"
+    setup_network "$n"
+    link_env_files "$n"
   done
 
-  for HOST in "${NODES[@]}"; do
-    setup_letsencrypt "$HOST"
-    deploy_traefik "$HOST"
+  log "Deploying Traefik..."
+  for n in "${NODES[@]}"; do
+    setup_letsencrypt "$n"
+    deploy_traefik "$n"
   done
 
-  deploy_postgres_primary "$POSTGRES_PRIMARY"
-  wait_for_tcp "$POSTGRES_PRIMARY" 5432 "PostgreSQL primary"
+  log "Deploying Patroni + etcd cluster..."
+  for n in "${NODES[@]}"; do
+    deploy_patroni_etcd "$n" "$n"
+  done
 
-  deploy_postgres_replica "$POSTGRES_REPLICA"
-  wait_for_tcp "$POSTGRES_REPLICA" 5432 "PostgreSQL replica"
+  for n in "${NODES[@]}"; do
+    wait_for_tcp "$n" 2379 "etcd"
+    wait_for_tcp "$n" 8008 "patroni"
+  done
 
-  for HOST in "${NODES[@]}"; do
-    deploy_keycloak "$HOST" "$HOST"
+  log "Deploying Keycloak..."
+  for n in "${NODES[@]}"; do
+    deploy_keycloak "$n" "$n"
   done
 
   log "All services deployed successfully"
 }
 
-read -s -p "Root SSH password: " SSHPASS
-echo
+git submodule update --init --recursive || true
+git submodule update --remote --merge || true
 
 main "$@"

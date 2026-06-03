@@ -24,6 +24,8 @@ NODES=(
 
 POSTGRES_PRIMARY="10.31.31.14"
 KEYCLOAK_CLUSTER_HOSTS="10.31.31.14[7800],10.31.31.15[7800],10.31.31.16[7800]"
+ETCD_INITIAL_CLUSTER="etcd-10-31-31-14=http://10.31.31.14:2380,etcd-10-31-31-15=http://10.31.31.15:2380,etcd-10-31-31-16=http://10.31.31.16:2380"
+ETCD3_HOSTS="10.31.31.14:2379,10.31.31.15:2379,10.31.31.16:2379"
 
 PATRONI_SCOPE="keycloak-pg"
 ETCD_INITIAL_CLUSTER_TOKEN="patroni-etcd"
@@ -41,27 +43,6 @@ require_cmd tar
 node_slug() {
   echo "${1//./-}"
 }
-
-build_etcd_initial_cluster() {
-  local cluster=""
-  local host slug
-
-  for host in "${NODES[@]}"; do
-    slug="$(node_slug "$host")"
-    cluster+="etcd-${slug}=http://${host}:2380,"
-  done
-
-  echo "${cluster%,}"
-}
-
-build_etcd_hosts_yaml() {
-  local host
-  for host in "${NODES[@]}"; do
-    printf '          - %s:2379\n' "$host"
-  done
-}
-
-ETCD_INITIAL_CLUSTER="$(build_etcd_initial_cluster)"
 
 ssh_run() {
   local HOST="$1"
@@ -90,7 +71,7 @@ append_node_env() {
 set -euo pipefail
 
 tmp="\$(mktemp)"
-grep -Ev '^(NODE_IP|POSTGRES_PRIMARY_HOST|KEYCLOAK_CLUSTER_HOSTS|PATRONI_SCOPE|PATRONI_NODE_NAME|ETCD_NODE_NAME|ETCD_INITIAL_CLUSTER|ETCD_INITIAL_CLUSTER_TOKEN)=' \
+grep -Ev '^(NODE_IP|POSTGRES_PRIMARY_HOST|KEYCLOAK_CLUSTER_HOSTS|PATRONI_SCOPE|PATRONI_NODE_NAME|ETCD_NODE_NAME|ETCD_INITIAL_CLUSTER|ETCD_INITIAL_CLUSTER_TOKEN|ETCD3_HOSTS|PGVERSION|SPILO_PROVIDER)=' \
   "$REPO_BASE_DIR/.env" > "\$tmp" || true
 
 cat >>"\$tmp" <<ENVVARS
@@ -103,6 +84,9 @@ PATRONI_NODE_NAME=pg-$NODE_SLUG
 ETCD_NODE_NAME=etcd-$NODE_SLUG
 ETCD_INITIAL_CLUSTER=$ETCD_INITIAL_CLUSTER
 ETCD_INITIAL_CLUSTER_TOKEN=$ETCD_INITIAL_CLUSTER_TOKEN
+ETCD3_HOSTS=$ETCD3_HOSTS
+PGVERSION=16
+SPILO_PROVIDER=local
 ENVVARS
 
 mv "\$tmp" "$REPO_BASE_DIR/.env"
@@ -199,18 +183,6 @@ chmod 600 /root/traefik/letsencrypt/acme.json
 EOF
 }
 
-link_env_files() {
-  local HOST="$1"
-
-  ssh_run "$HOST" <<'EOF'
-set -euo pipefail
-
-ln -sfn ../.env /root/traefik/.env || true
-ln -sfn ../.env /root/keycloak/.env || true
-ln -sfn ../.env /root/postgres-ha/.env || true
-EOF
-}
-
 deploy_traefik() {
   local HOST="$1"
 
@@ -224,6 +196,7 @@ cd "$REPO_BASE_DIR"
 if [ -d "traefik/.git" ]; then
   git -C traefik pull --ff-only || true
 else
+  rm -rf traefik
   git clone "$TRAEFIK_REPO_URL" traefik
 fi
 
@@ -233,11 +206,11 @@ git pull --ff-only || true
 
 bash replace-identifier.sh auth || true
 
+cp "$REPO_BASE_DIR/.env" "$REPO_BASE_DIR/traefik/.env"
+
 mkdir -p /root/traefik/letsencrypt
 touch /root/traefik/letsencrypt/acme.json
 chmod 600 /root/traefik/letsencrypt/acme.json
-
-ln -sfn ../.env /root/traefik/.env
 
 docker network inspect traefik-net >/dev/null 2>&1 || docker network create traefik-net
 
@@ -259,7 +232,7 @@ set -euo pipefail
 mkdir -p /root/postgres-ha
 cd /root/postgres-ha
 
-ln -sfn ../.env .env
+cp "$REPO_BASE_DIR/.env" "$REPO_BASE_DIR/postgres-ha/.env"
 
 cat >docker-compose.yml <<COMPOSE
 services:
@@ -270,26 +243,16 @@ services:
     restart: unless-stopped
     volumes:
       - etcd_data:/etcd-data
-    entrypoint: ["/usr/local/bin/etcd"]
     command:
-      - --name
-      - etcd-${NODE_SLUG}
-      - --data-dir
-      - /etcd-data
-      - --listen-peer-urls
-      - http://0.0.0.0:2380
-      - --listen-client-urls
-      - http://0.0.0.0:2379,http://127.0.0.1:2379
-      - --advertise-client-urls
-      - http://${NODE_IP}:2379
-      - --initial-advertise-peer-urls
-      - http://${NODE_IP}:2380
-      - --initial-cluster
-      - ${ETCD_INITIAL_CLUSTER}
-      - --initial-cluster-token
-      - ${ETCD_INITIAL_CLUSTER_TOKEN}
-      - --initial-cluster-state
-      - new
+      - --name=etcd-${NODE_SLUG}
+      - --data-dir=/etcd-data
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://${NODE_IP}:2379
+      - --initial-advertise-peer-urls=http://${NODE_IP}:2380
+      - --initial-cluster=${ETCD_INITIAL_CLUSTER}
+      - --initial-cluster-token=${ETCD_INITIAL_CLUSTER_TOKEN}
+      - --initial-cluster-state=new
 
   patroni:
     image: ghcr.io/zalando/spilo-16:3.3-p3
@@ -299,44 +262,18 @@ services:
     depends_on:
       - etcd
     environment:
-      PATRONI_CONFIGURATION: |
-        scope: ${PATRONI_SCOPE}
-        namespace: /service
-        name: pg-${NODE_SLUG}
-        restapi:
-          listen: 0.0.0.0:8008
-          connect_address: ${NODE_IP}:8008
-        etcd3:
-          hosts:
-$(build_etcd_hosts_yaml)
-        bootstrap:
-          dcs:
-            ttl: 30
-            loop_wait: 10
-            retry_timeout: 10
-            maximum_lag_on_failover: 1048576
-            synchronous_mode: true
-            postgresql:
-              use_pg_rewind: true
-              use_slots: true
-          initdb:
-            - encoding: UTF8
-            - data-checksums
+      SPILO_PROVIDER: \${SPILO_PROVIDER}
+      SCOPE: \${PATRONI_SCOPE}
+      ETCD3_HOSTS: \${ETCD3_HOSTS}
+      PGVERSION: \${PGVERSION}
+      RESTAPI_CONNECT_ADDRESS: ${NODE_IP}:8008
+      SPILO_CONFIGURATION: |
         postgresql:
-          listen: 0.0.0.0:5432
           connect_address: ${NODE_IP}:5432
-          data_dir: /home/postgres/pgdata/pgroot/data
-          bin_dir: /usr/lib/postgresql/16/bin
-          authentication:
-            superuser:
-              username: \${POSTGRESQL_USER}
-              password: \${POSTGRESQL_PASS}
-            replication:
-              username: \${POSTGRESQL_USER}
-              password: \${POSTGRESQL_PASS}
-            rewind:
-              username: \${POSTGRESQL_USER}
-              password: \${POSTGRESQL_PASS}
+      PGUSER_SUPERUSER: \${POSTGRESQL_USER}
+      PGPASSWORD_SUPERUSER: \${POSTGRESQL_PASS}
+      PGUSER_STANDBY: \${POSTGRESQL_USER}
+      PGPASSWORD_STANDBY: \${POSTGRESQL_PASS}
     volumes:
       - patroni_data:/home/postgres/pgdata
 
@@ -374,7 +311,7 @@ set -euo pipefail
 
 cd /root/keycloak
 
-ln -sfn ../.env .env
+cp "$REPO_BASE_DIR/.env" "$REPO_BASE_DIR/keycloak/.env"
 
 cat >docker-compose.override.yml <<COMPOSE
 services:
@@ -439,7 +376,6 @@ main() {
     copy_env_to_host "$n"
     append_node_env "$n" "$n"
     setup_network "$n"
-    link_env_files "$n"
   done
 
   log "Deploying Traefik..."

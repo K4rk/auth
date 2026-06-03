@@ -57,13 +57,6 @@ build_etcd_initial_cluster() {
   echo "${cluster%,}"
 }
 
-build_etcd_hosts_yaml() {
-  local host
-  for host in "${NODES[@]}"; do
-    printf '          - %s:2379\n' "$host"
-  done
-}
-
 ETCD_INITIAL_CLUSTER="$(build_etcd_initial_cluster)"
 
 ssh_run() {
@@ -217,10 +210,13 @@ cd "$REPO_BASE_DIR"
 
 if [ -d "traefik/.git" ]; then
   git -C traefik pull --ff-only || true
-else
+elif [ -d "traefik" ]; then
   rm -rf traefik
   git clone "$TRAEFIK_REPO_URL" traefik
+else
+  git clone "$TRAEFIK_REPO_URL" traefik
 fi
+# DO NOT FUCKING COPY .env, TRAEFIK HAS ITS OWN ENV IN THE FUCKING REPO
 
 cd traefik
 git checkout main || true
@@ -357,7 +353,7 @@ fi
 
 cd /root/keycloak
 
-cp "$REPO_BASE_DIR/.env" "$REPO_BASE_DIR/keycloak/.env" || true
+cp "$REPO_BASE_DIR/.env" "$REPO_BASE_DIR/keycloak/.env"
 
 cat >docker-compose.override.yml <<COMPOSE
 services:

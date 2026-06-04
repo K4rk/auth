@@ -642,8 +642,8 @@ services:
       - traefik.http.routers.keycloak-24.entrypoints=https
       - traefik.http.routers.keycloak-24.tls=true
       - traefik.http.routers.keycloak-24.tls.certresolver=powerdns
-      - traefik.http.routers.keycloak-24.tls.domains[0].main=esadax.com
-      - traefik.http.routers.keycloak-24.tls.domains[0].sans=*.esadax.com
+      - traefik.http.routers.keycloak-24.tls.domains[0].main=esadax.org
+      - traefik.http.routers.keycloak-24.tls.domains[0].sans=*.esadax.org
       - traefik.http.services.keycloak-24.loadbalancer.server.port=8080
 
 networks:

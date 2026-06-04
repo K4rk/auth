@@ -440,6 +440,40 @@ SQL
 EOF
 }
 
+wait_for_patroni_replication_ready() {
+  local HOST="$1"
+  local NODE_SLUG
+  NODE_SLUG="$(node_slug "$HOST")"
+  local EXPECTED="${#NODES[@]}"
+
+  log "Waiting for Patroni replication to stabilize..."
+
+  for _ in $(seq 1 150); do
+    if ssh_run "$HOST" <<EOF >/dev/null 2>&1
+set -euo pipefail
+
+OUT=\$(docker exec patroni-${NODE_SLUG} patronictl list 2>/dev/null || true)
+
+echo "\$OUT" | grep -q "creating replica" && exit 1
+echo "\$OUT" | grep -q "unknown" && exit 1
+
+ROWS=\$(echo "\$OUT" | awk -F'|' '/pg-/{print}')
+COUNT=\$(echo "\$ROWS" | awk 'NF{c++} END{print c+0}')
+LEADER=\$(echo "\$ROWS" | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/, "", \$4); if (\$4=="Leader") c++} END{print c+0}')
+
+test "\$COUNT" -eq $EXPECTED
+test "\$LEADER" -eq 1
+EOF
+    then
+      return 0
+    fi
+
+    sleep 5
+  done
+
+  err "Patroni replication did not stabilize in time"
+}
+
 patroni_cluster_check() {
   local HOST="$1"
   local NODE_SLUG
@@ -595,9 +629,9 @@ main() {
 
   wait_for_patroni_cluster_ready "$POSTGRES_PRIMARY"
   prepare_postgres_app_role "$POSTGRES_PRIMARY" "$POSTGRES_PRIMARY"
-  sleep 5
+  wait_for_patroni_replication_ready "$POSTGRES_PRIMARY"
   patroni_cluster_check "$POSTGRES_PRIMARY"
-
+  
   # log "Deploying Keycloak..."
   # for n in "${NODES[@]}"; do
   #   deploy_keycloak "$n" "$n"

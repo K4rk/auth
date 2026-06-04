@@ -69,7 +69,7 @@ ssh_run() {
 
 copy_env_to_host() {
   local HOST="$1"
-  echo "Copy .env to $HOST"
+  log "Copy .env to $HOST"
   sshpass -p "$SSHPASS" scp \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
@@ -82,7 +82,7 @@ append_node_env() {
   local NODE_IP="$2"
   local NODE_SLUG
   NODE_SLUG="$(node_slug "$NODE_IP")"
-  echo "Append node env to $HOST"
+  log "Append node env to $HOST"
   ssh_run "$HOST" <<EOF
 set -euo pipefail
 
@@ -181,7 +181,7 @@ EOF
 
 setup_network() {
   local HOST="$1"
-
+  log "Setup network on $HOST"
   ssh_run "$HOST" <<'EOF'
 set -euo pipefail
 docker network inspect traefik-net >/dev/null 2>&1 || docker network create traefik-net

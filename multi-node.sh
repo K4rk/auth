@@ -274,7 +274,7 @@ services:
       - --listen-peer-urls
       - http://0.0.0.0:2380
       - --listen-client-urls
-      - http://0.0.0.0:2379,http://127.0.0.1:2379
+      - http://0.0.0.0:2379
       - --advertise-client-urls
       - http://${NODE_IP}:2379
       - --initial-advertise-peer-urls

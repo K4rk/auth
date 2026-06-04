@@ -623,7 +623,6 @@ cat >docker-compose.override.yml <<COMPOSE
 services:
   keycloak:
     image: registry2.esadax.org/ironic/keycloak
-    build: .
     restart: unless-stopped
     environment:
       KC_DB: postgres
@@ -665,6 +664,7 @@ networks:
     external: true
 COMPOSE
 
+docker compose down -v || true
 docker compose up -d --remove-orphans
 EOF
 }

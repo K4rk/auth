@@ -69,6 +69,7 @@ ssh_run() {
 
 copy_env_to_host() {
   local HOST="$1"
+  echo "Copy .env to $HOST"
   sshpass -p "$SSHPASS" scp \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
@@ -81,7 +82,7 @@ append_node_env() {
   local NODE_IP="$2"
   local NODE_SLUG
   NODE_SLUG="$(node_slug "$NODE_IP")"
-
+  echo "Append node env to $HOST"
   ssh_run "$HOST" <<EOF
 set -euo pipefail
 

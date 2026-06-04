@@ -63,7 +63,7 @@ fi
 # ---------------- CLEAN ENV ----------------
 rm -f /root/.env || true
 
-echo "[INFO] cleanup done on $(hostname)"
+echo "[INFO] cleanup done on $HOST"
 EOF
 }
 

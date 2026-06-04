@@ -593,6 +593,8 @@ rm -rf /root/keycloak
 mkdir -p /root/keycloak
 EOF
 
+  scp_env_to_host "$HOST"
+
   ssh_run "$HOST" <<EOF
 set -euo pipefail
 
@@ -603,7 +605,6 @@ if [ -f "$REPO_BASE_DIR/.env" ]; then
 fi
 
 cd /root/keycloak
-scp_env_to_host "$HOST"
 
 cat >docker-compose.yml <<COMPOSE
 services:

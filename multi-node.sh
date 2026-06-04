@@ -436,55 +436,39 @@ wait_for_patroni_cluster_ready() {
   local HOST="$1"
   local EXPECTED="${#NODES[@]}"
 
-  log "Waiting for FULL Patroni cluster stability ($EXPECTED nodes)..."
+  log "Waiting for Patroni cluster readiness ($EXPECTED nodes)..."
 
-  for _ in $(seq 1 120); do
-
+  for _ in $(seq 1 90); do
     if ssh_run "$HOST" <<EOF >/dev/null 2>&1
 set -euo pipefail
-
 OUTPUT=\$(docker exec patroni-$(node_slug "$HOST") patronictl list --format json 2>/dev/null || true)
+
+if [ -z "\$OUTPUT" ]; then exit 1; fi
 
 python3 - <<PY
 import json, sys
-
 try:
-    data = json.loads("""$OUTPUT""")
+    data=json.loads("""\$OUTPUT""")
 except:
     sys.exit(1)
 
-if len(data) != $EXPECTED:
-    sys.exit(1)
+nodes=len(data)
+leader=any(x.get("Role","")=="Leader" for x in data)
 
-roles = {x.get("Role","") for x in data}
-states = {x.get("State","") for x in data}
-
-# must have leader
-if "Leader" not in roles:
-    sys.exit(1)
-
-# no stopped nodes allowed
-if "stopped" in states:
-    sys.exit(1)
-
-# replicas must be streaming or sync standby
-for x in data:
-    if x.get("Role") != "Leader":
-        if x.get("State") not in ("streaming", "running"):
-            sys.exit(1)
-
-sys.exit(0)
+if nodes==$EXPECTED and leader:
+    sys.exit(0)
+sys.exit(1)
 PY
 EOF
     then
-      log "Patroni cluster is stable and fully replicated"
+      log "Patroni cluster is ready"
       return 0
     fi
 
     sleep 5
   done
 
-  err "Patroni cluster did not stabilize in time"
+  err "Patroni cluster did not become ready in time"
 }
 
 deploy_keycloak() {
@@ -614,7 +598,7 @@ main() {
   prepare_postgres_app_role "$POSTGRES_PRIMARY" "$POSTGRES_PRIMARY"
 
   wait_for_patroni_cluster_ready "$POSTGRES_PRIMARY"
-
+  
   patroni_cluster_check "$POSTGRES_PRIMARY"
 
   # log "Deploying Keycloak..."

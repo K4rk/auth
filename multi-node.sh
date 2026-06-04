@@ -638,7 +638,7 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=traefik-net
-      - traefik.http.routers.keycloak-24.rule=Host(\`auth2.esadax.org\`)
+      - traefik.http.routers.keycloak-24.rule=Host(\\\`auth2.esadax.org\\\`)
       - traefik.http.routers.keycloak-24.entrypoints=https
       - traefik.http.routers.keycloak-24.tls=true
       - traefik.http.routers.keycloak-24.tls.certresolver=powerdns
@@ -668,8 +668,6 @@ main() {
   log "Installing base on all nodes..."
   for n in "${NODES[@]}"; do
     install_base "$n"
-    copy_env_to_host "$n"
-    append_node_env "$n" "$n"
     setup_network "$n"
   done
 
@@ -682,6 +680,11 @@ main() {
   # ---------------- POSTGRES ----------------
   if [[ "$DEPLOY_POSTGRES" =~ ^[Yy]$ ]]; then
     log "Preparing Patroni + etcd cluster..."
+    for n in "${NODES[@]}"; do
+      copy_env_to_host "$n"
+      append_node_env "$n" "$n"
+    done
+
     for n in "${NODES[@]}"; do
       deploy_patroni_stack "$n" "$n"
     done

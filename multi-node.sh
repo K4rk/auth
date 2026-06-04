@@ -295,16 +295,45 @@ services:
     environment:
       SPILO_PROVIDER: ${SPILO_PROVIDER}
       PGVERSION: ${PGVERSION}
-      SCOPE: ${PATRONI_SCOPE}
-      ETCD3_HOSTS: ${ETCD3_HOSTS}
-      RESTAPI_CONNECT_ADDRESS: ${NODE_IP}:8008
-      PATRONI_CONFIGURATION: |
+      SPILO_CONFIGURATION: |
+        scope: ${PATRONI_SCOPE}
+        name: pg-${NODE_SLUG}
+        restapi:
+          listen: 0.0.0.0:8008
+          connect_address: ${NODE_IP}:8008
+        etcd3:
+          hosts:
+            - 10.31.31.14:2379
+            - 10.31.31.15:2379
+            - 10.31.31.16:2379
+        bootstrap:
+          dcs:
+            ttl: 30
+            loop_wait: 10
+            retry_timeout: 10
+            maximum_lag_on_failover: 1048576
+            synchronous_mode: true
+            postgresql:
+              use_pg_rewind: true
+              use_slots: true
+          initdb:
+            - encoding: UTF8
+            - data-checksums
         postgresql:
+          listen: 0.0.0.0:5432
           connect_address: ${NODE_IP}:5432
-      PGUSER_SUPERUSER: \${POSTGRESQL_USER}
-      PGPASSWORD_SUPERUSER: \${POSTGRESQL_PASS}
-      PGUSER_STANDBY: \${POSTGRESQL_USER}
-      PGPASSWORD_STANDBY: \${POSTGRESQL_PASS}
+          data_dir: /home/postgres/pgdata/pgroot/data
+          bin_dir: /usr/lib/postgresql/16/bin
+          authentication:
+            superuser:
+              username: \${POSTGRESQL_USER}
+              password: \${POSTGRESQL_PASS}
+            replication:
+              username: \${POSTGRESQL_USER}
+              password: \${POSTGRESQL_PASS}
+            rewind:
+              username: \${POSTGRESQL_USER}
+              password: \${POSTGRESQL_PASS}
 
 volumes:
   etcd_data:
@@ -363,7 +392,6 @@ if [ -f "$REPO_BASE_DIR/.env" ]; then
 fi
 
 cd /root/keycloak
-
 cp "$REPO_BASE_DIR/.env" "$REPO_BASE_DIR/keycloak/.env"
 
 cat >docker-compose.override.yml <<COMPOSE
@@ -406,9 +434,6 @@ services:
       - traefik.http.routers.keycloak-24.tls.domains[0].main=esadax.com
       - traefik.http.routers.keycloak-24.tls.domains[0].sans=*.esadax.com
       - traefik.http.services.keycloak-24.loadbalancer.server.port=8080
-
-volumes:
-  db_data:
 
 networks:
   traefik-net:

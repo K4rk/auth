@@ -629,7 +629,7 @@ services:
       KC_PROXY: edge
       KC_CACHE: ispn
       KC_CACHE_STACK: tcp
-      JAVA_OPTS_APPEND: "-Djgroups.bind_addr=${NODE_IP} -Djgroups.tcpping.initial_hosts=${KEYCLOAK_CLUSTER_HOSTS}"
+      JAVA_OPTS_APPEND: "-Djgroups.bind_addr=${NODE_IP} -Djgroups.tcpping.initial_hosts=${KEYCLOAK_CLUSTER_HOSTS} -Djgroups.udp.send_buf_size=26214400 -Djgroups.udp.recv_buf_size=26214400"
     ports:
       # - "8080:8080"
       - "7800:7800"

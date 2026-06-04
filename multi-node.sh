@@ -596,7 +596,9 @@ main() {
   done
 
   prepare_postgres_app_role "$POSTGRES_PRIMARY" "$POSTGRES_PRIMARY"
+
   wait_for_patroni_cluster_ready "$POSTGRES_PRIMARY"
+  
   patroni_cluster_check "$POSTGRES_PRIMARY"
 
   # log "Deploying Keycloak..."

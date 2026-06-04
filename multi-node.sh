@@ -407,6 +407,70 @@ SQL
 EOF
 }
 
+patroni_cluster_check() {
+  local HOST="$1"
+  local NODE_SLUG
+  NODE_SLUG="$(node_slug "$HOST")"
+
+  log "Patroni cluster status"
+
+  ssh_run "$HOST" <<EOF
+set -euo pipefail
+
+OUTPUT=\$(docker exec patroni-${NODE_SLUG} patronictl list)
+
+echo
+echo "========================================"
+echo "\$OUTPUT"
+echo "========================================"
+echo
+
+echo "\$OUTPUT" | grep -q "Leader" || {
+  echo "No Patroni leader found"
+  exit 1
+}
+EOF
+}
+
+wait_for_patroni_cluster_ready() {
+  local HOST="$1"
+  local EXPECTED="${#NODES[@]}"
+
+  log "Waiting for Patroni cluster readiness ($EXPECTED nodes)..."
+
+  for _ in $(seq 1 90); do
+    if ssh_run "$HOST" <<EOF >/dev/null 2>&1
+set -euo pipefail
+OUTPUT=\$(docker exec patroni-$(node_slug "$HOST") patronictl list --format json 2>/dev/null || true)
+
+if [ -z "\$OUTPUT" ]; then exit 1; fi
+
+python3 - <<PY
+import json, sys
+try:
+    data=json.loads("""\$OUTPUT""")
+except:
+    sys.exit(1)
+
+nodes=len(data)
+leader=any(x.get("Role","")=="Leader" for x in data)
+
+if nodes==$EXPECTED and leader:
+    sys.exit(0)
+sys.exit(1)
+PY
+EOF
+    then
+      log "Patroni cluster is ready"
+      return 0
+    fi
+
+    sleep 5
+  done
+
+  err "Patroni cluster did not become ready in time"
+}
+
 deploy_keycloak() {
   local HOST="$1"
   local NODE_IP="$2"
@@ -532,6 +596,8 @@ main() {
   done
 
   prepare_postgres_app_role "$POSTGRES_PRIMARY" "$POSTGRES_PRIMARY"
+  wait_for_patroni_cluster_ready "$POSTGRES_PRIMARY"
+  patroni_cluster_check "$POSTGRES_PRIMARY"
 
   # log "Deploying Keycloak..."
   # for n in "${NODES[@]}"; do

@@ -503,6 +503,84 @@ test "\$BAD" -eq 0
 EOF
 }
 
+# ---------------- DOCKER REGISTRY CREDENTIALS ----------------
+DOCKER_REGISTRY="${DOCKER_REGISTRY:-registry2.esadax.org}"
+DOCKER_USER=""
+DOCKER_PASSWORD=""
+
+get_docker_registry_credentials() {
+  local cfg="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
+
+  if [[ -f "$cfg" ]] && command -v python3 >/dev/null 2>&1; then
+    local creds
+    if creds="$(
+      python3 - "$DOCKER_REGISTRY" "$cfg" <<'PY'
+import base64, json, sys
+
+registry = sys.argv[1]
+cfg_path = sys.argv[2]
+
+with open(cfg_path, "r", encoding="utf-8") as f:
+    cfg = json.load(f)
+
+auths = cfg.get("auths", {})
+
+candidates = [
+    registry,
+    f"https://{registry}",
+    f"http://{registry}",
+    f"https://{registry}/",
+]
+
+for key in candidates:
+    entry = auths.get(key)
+    if isinstance(entry, dict) and entry.get("auth"):
+        raw = base64.b64decode(entry["auth"]).decode("utf-8", "replace")
+        if ":" in raw:
+            user, pwd = raw.split(":", 1)
+            print(user)
+            print(pwd)
+            raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+    )"; then
+      DOCKER_USER="$(sed -n '1p' <<< "$creds")"
+      DOCKER_PASSWORD="$(sed -n '2p' <<< "$creds")"
+
+      if [[ -n "$DOCKER_USER" && -n "$DOCKER_PASSWORD" ]]; then
+        log "Using Docker registry credentials from local Docker config"
+        return 0
+      fi
+    fi
+  fi
+
+  warn "Docker credentials not found in local Docker config for $DOCKER_REGISTRY"
+  read -r -p "Docker Registry Username: " DOCKER_USER
+  read -r -s -p "Docker Registry Password: " DOCKER_PASSWORD
+  printf '\n'
+
+  printf '%s' "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USER" --password-stdin >/dev/null
+  log "Logged in locally to $DOCKER_REGISTRY"
+}
+
+
+# ---------------- DOCKER LOGIN ----------------
+docker_registry_login() {
+  local host="$1"
+
+  log "Docker login on $host"
+
+  if ! printf '%s' "$DOCKER_PASSWORD" | \
+    sshpass -p "$SSHPASS" ssh -o StrictHostKeyChecking=no "$USER@$host" \
+      "docker login '$DOCKER_REGISTRY' -u '$DOCKER_USER' --password-stdin" >/dev/null
+  then
+    err "Docker login failed on $host"
+  fi
+
+  log "Docker login completed on $host"
+}
+
 deploy_keycloak() {
   local HOST="$1"
   local NODE_IP="$2"
@@ -594,7 +672,8 @@ EOF
 main() {
   read -s -p "Root SSH password: " SSHPASS
   echo ""
-
+  get_docker_registry_credentials
+  
   log "Installing base on all nodes..."
   for n in "${NODES[@]}"; do
     install_base "$n"
@@ -627,15 +706,20 @@ main() {
     wait_for_tcp "$n" 8008 "patroni"
   done
 
+  for n in "${NODES[@]}"; do
+    docker_registry_login "$n"
+  done
+
+
   wait_for_patroni_cluster_ready "$POSTGRES_PRIMARY"
   prepare_postgres_app_role "$POSTGRES_PRIMARY" "$POSTGRES_PRIMARY"
   wait_for_patroni_replication_ready "$POSTGRES_PRIMARY"
   patroni_cluster_check "$POSTGRES_PRIMARY"
-  
-  # log "Deploying Keycloak..."
-  # for n in "${NODES[@]}"; do
-  #   deploy_keycloak "$n" "$n"
-  # done
+
+  log "Deploying Keycloak..."
+  for n in "${NODES[@]}"; do
+    deploy_keycloak "$n" "$n"
+  done
 
   log "All services deployed successfully"
 }

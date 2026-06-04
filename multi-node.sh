@@ -631,7 +631,7 @@ services:
       KC_CACHE_STACK: tcp
       JAVA_OPTS_APPEND: "-Djgroups.bind_addr=${NODE_IP} -Djgroups.tcpping.initial_hosts=${KEYCLOAK_CLUSTER_HOSTS}"
     ports:
-      - "8080:8080"
+      # - "8080:8080"
       - "7800:7800"
     networks:
       - traefik-net

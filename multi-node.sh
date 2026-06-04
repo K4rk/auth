@@ -327,13 +327,13 @@ services:
           bin_dir: /usr/lib/postgresql/16/bin
           authentication:
             superuser:
-              username: \${POSTGRESQL_USER}
+              username: postgres
               password: \${POSTGRESQL_PASS}
             replication:
-              username: \${POSTGRESQL_USER}
+              username: standby
               password: \${POSTGRESQL_PASS}
             rewind:
-              username: \${POSTGRESQL_USER}
+              username: postgres
               password: \${POSTGRESQL_PASS}
 
 volumes:
@@ -341,7 +341,7 @@ volumes:
   patroni_data:
 COMPOSE
 
-docker compose down -v
+docker compose down -v || true
 sleep 2
 docker compose up -d etcd
 EOF
@@ -356,6 +356,54 @@ start_patroni() {
 set -euo pipefail
 cd /root/postgres-ha
 docker compose up -d patroni
+EOF
+}
+
+prepare_postgres_app_role() {
+  local HOST="$1"
+  local NODE_IP="$2"
+  local NODE_SLUG
+  NODE_SLUG="$(node_slug "$NODE_IP")"
+
+  log "Preparing PostgreSQL application role on $HOST"
+
+  ssh_run "$HOST" <<EOF
+set -euo pipefail
+
+if [ -f "$REPO_BASE_DIR/.env" ]; then
+  set -a
+  . "$REPO_BASE_DIR/.env"
+  set +a
+fi
+
+cd /root/postgres-ha
+
+for _ in \$(seq 1 60); do
+  if docker exec patroni-${NODE_SLUG} psql -U postgres -d postgres -c "SELECT 1" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
+
+docker exec patroni-${NODE_SLUG} psql -U postgres -d postgres <<SQL
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '\${POSTGRESQL_USER}') THEN
+    EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', '\${POSTGRESQL_USER}', '\${POSTGRESQL_PASS}');
+  END IF;
+END
+\$\$;
+
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '\${POSTGRESQL_DB}') THEN
+    EXECUTE format('CREATE DATABASE %I OWNER %I', '\${POSTGRESQL_DB}', '\${POSTGRESQL_USER}');
+  END IF;
+END
+\$\$;
+
+GRANT ALL PRIVILEGES ON DATABASE "\${POSTGRESQL_DB}" TO "\${POSTGRESQL_USER}";
+SQL
 EOF
 }
 
@@ -483,10 +531,12 @@ main() {
     wait_for_tcp "$n" 8008 "patroni"
   done
 
-  log "Deploying Keycloak..."
-  for n in "${NODES[@]}"; do
-    deploy_keycloak "$n" "$n"
-  done
+  prepare_postgres_app_role "$POSTGRES_PRIMARY" "$POSTGRES_PRIMARY"
+
+  # log "Deploying Keycloak..."
+  # for n in "${NODES[@]}"; do
+  #   deploy_keycloak "$n" "$n"
+  # done
 
   log "All services deployed successfully"
 }

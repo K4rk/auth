@@ -672,8 +672,12 @@ EOF
 main() {
   read -s -p "Root SSH password: " SSHPASS
   echo ""
+
   get_docker_registry_credentials
-  
+
+  read -r -p "Deploy Postgres (Patroni + etcd)? (y/n): " DEPLOY_POSTGRES
+  read -r -p "Deploy Keycloak? (y/n): " DEPLOY_KEYCLOAK
+
   log "Installing base on all nodes..."
   for n in "${NODES[@]}"; do
     install_base "$n"
@@ -688,38 +692,49 @@ main() {
     deploy_traefik "$n"
   done
 
-  log "Preparing Patroni + etcd cluster..."
-  for n in "${NODES[@]}"; do
-    deploy_patroni_stack "$n" "$n"
-  done
+  # ---------------- POSTGRES ----------------
+  if [[ "$DEPLOY_POSTGRES" =~ ^[Yy]$ ]]; then
+    log "Preparing Patroni + etcd cluster..."
+    for n in "${NODES[@]}"; do
+      deploy_patroni_stack "$n" "$n"
+    done
 
-  for n in "${NODES[@]}"; do
-    wait_for_tcp "$n" 2379 "etcd"
-  done
+    for n in "${NODES[@]}"; do
+      wait_for_tcp "$n" 2379 "etcd"
+    done
 
-  log "Starting Patroni..."
-  for n in "${NODES[@]}"; do
-    start_patroni "$n"
-  done
+    log "Starting Patroni..."
+    for n in "${NODES[@]}"; do
+      start_patroni "$n"
+    done
 
-  for n in "${NODES[@]}"; do
-    wait_for_tcp "$n" 8008 "patroni"
-  done
+    for n in "${NODES[@]}"; do
+      wait_for_tcp "$n" 8008 "patroni"
+    done
 
-  for n in "${NODES[@]}"; do
-    docker_registry_login "$n"
-  done
+    for n in "${NODES[@]}"; do
+      docker_registry_login "$n"
+    done
 
+    wait_for_patroni_cluster_ready "$POSTGRES_PRIMARY"
+    prepare_postgres_app_role "$POSTGRES_PRIMARY" "$POSTGRES_PRIMARY"
+    wait_for_patroni_replication_ready "$POSTGRES_PRIMARY"
+    patroni_cluster_check "$POSTGRES_PRIMARY"
+  else
+    log "Skipping Postgres deployment"
+  fi
 
-  wait_for_patroni_cluster_ready "$POSTGRES_PRIMARY"
-  prepare_postgres_app_role "$POSTGRES_PRIMARY" "$POSTGRES_PRIMARY"
-  wait_for_patroni_replication_ready "$POSTGRES_PRIMARY"
-  patroni_cluster_check "$POSTGRES_PRIMARY"
+  # ---------------- KEYCLOAK ----------------
+  if [[ "$DEPLOY_KEYCLOAK" =~ ^[Yy]$ ]]; then
+    log "Deploying Keycloak..."
 
-  log "Deploying Keycloak..."
-  for n in "${NODES[@]}"; do
-    deploy_keycloak "$n" "$n"
-  done
+    for n in "${NODES[@]}"; do
+      docker_registry_login "$n"
+      deploy_keycloak "$n" "$n"
+    done
+  else
+    log "Skipping Keycloak deployment"
+  fi
 
   log "All services deployed successfully"
 }

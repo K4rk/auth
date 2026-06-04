@@ -109,30 +109,6 @@ mv "\$tmp" "$REPO_BASE_DIR/.env"
 EOF
 }
 
-sync_dir_to_host() {
-  local SRC="$1"
-  local HOST="$2"
-  local DEST="$3"
-
-  [[ -d "$SRC" ]] || err "Source directory does not exist: $SRC"
-
-  ssh_run "$HOST" <<EOF
-set -euo pipefail
-rm -rf "$DEST"
-mkdir -p "$DEST"
-EOF
-
-  (
-    cd "$SRC"
-    tar \
-      --exclude='.git' \
-      --exclude='.env' \
-      -cf - .
-  ) | sshpass -p "$SSHPASS" ssh \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    "$USER@$HOST" "tar -xf - -C '$DEST'"
-}
 
 wait_for_tcp() {
   local HOST="$1"
@@ -581,6 +557,18 @@ docker_registry_login() {
   log "Docker login completed on $host"
 }
 
+scp_env_to_host() {
+  local HOST="$1"
+
+  log "Copy local Keycloak .env to $HOST"
+
+  sshpass -p "$SSHPASS" scp \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    "$LOCAL_KEYCLOAK_DIR/.env" \
+    "$USER@$HOST:/root/keycloak/.env"
+}
+
 deploy_keycloak() {
   local HOST="$1"
   local NODE_IP="$2"
@@ -605,8 +593,6 @@ rm -rf /root/keycloak
 mkdir -p /root/keycloak
 EOF
 
-  sync_dir_to_host "$LOCAL_KEYCLOAK_DIR" "$HOST" "/root/keycloak"
-
   ssh_run "$HOST" <<EOF
 set -euo pipefail
 
@@ -617,9 +603,9 @@ if [ -f "$REPO_BASE_DIR/.env" ]; then
 fi
 
 cd /root/keycloak
-cp "$REPO_BASE_DIR/.env" "$REPO_BASE_DIR/keycloak/.env"
+scp_env_to_host "$HOST"
 
-cat >docker-compose.override.yml <<COMPOSE
+cat >docker-compose.yml <<COMPOSE
 services:
   keycloak:
     image: registry2.esadax.org/ironic/keycloak

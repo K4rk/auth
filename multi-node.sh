@@ -245,6 +245,12 @@ deploy_patroni_stack() {
   ssh_run "$HOST" <<EOF
 set -euo pipefail
 
+if [ -f "$REPO_BASE_DIR/.env" ]; then
+  set -a
+  . "$REPO_BASE_DIR/.env"
+  set +a
+fi
+
 mkdir -p /root/postgres-ha
 cd /root/postgres-ha
 
@@ -362,6 +368,12 @@ deploy_keycloak() {
   ssh_run "$HOST" <<EOF
 set -euo pipefail
 
+if [ -f "$REPO_BASE_DIR/.env" ]; then
+  set -a
+  . "$REPO_BASE_DIR/.env"
+  set +a
+fi
+
 if [ -d /root/keycloak ]; then
   cd /root/keycloak
   docker compose down || true
@@ -375,6 +387,12 @@ EOF
 
   ssh_run "$HOST" <<EOF
 set -euo pipefail
+
+if [ -f "$REPO_BASE_DIR/.env" ]; then
+  set -a
+  . "$REPO_BASE_DIR/.env"
+  set +a
+fi
 
 cd /root/keycloak
 cp "$REPO_BASE_DIR/.env" "$REPO_BASE_DIR/keycloak/.env"
